@@ -35,9 +35,8 @@ Example: https://quiz-xlm-v2.vercel.app
 
 📸 Screenshots:
 📱 Mobile Responsive View
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/9f75378c-da21-4b7e-8638-9cb463143c8f" width="650"/>
-</p>
+<img width="1919" height="1017" alt="Screenshot 2026-03-31 192822" src="https://github.com/user-attachments/assets/32aa69db-a9e4-4c4b-bfaf-7bb35918f345" />
+
 
 
 
