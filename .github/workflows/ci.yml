@@ -6,8 +6,64 @@ on:
   pull_request:
 
 jobs:
-  build:
+  # ── Job 1: Smart Contract Build & Tests ──────────────────────────────────
+  contract:
+    name: Smart Contract (Rust / Soroban)
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install Stellar CLI
+        run: |
+          cargo install --locked stellar-cli --features opt
+
+      - name: Build contract (release WASM)
+        run: |
+          stellar contract build
+          echo "WASM artifact:"
+          ls -lh target/wasm32-unknown-unknown/release/*.wasm
+
+      - name: Run contract unit tests
+        run: |
+          cargo test --locked -- --nocapture
+
+      - name: Verify WASM binary exists
+        run: |
+          WASM=$(ls target/wasm32-unknown-unknown/release/*.wasm | head -1)
+          if [ -z "$WASM" ]; then
+            echo "ERROR: No WASM binary found after build"
+            exit 1
+          fi
+          echo "Contract WASM OK: $WASM"
+
+  # ── Job 2: Frontend Build ────────────────────────────────────────────────
+  frontend:
+    name: Frontend (Node / React)
+    runs-on: ubuntu-latest
+    # Frontend job only runs after the contract job passes
+    needs: contract
 
     steps:
       - name: Checkout code
@@ -17,9 +73,19 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 18
+          cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Run frontend tests
+        run: npm test --if-present -- --passWithNoTests
 
       - name: Build project
         run: npm run build
+        env:
+          VITE_CONTRACT_ID:   ${{ secrets.VITE_CONTRACT_ID }}
+          VITE_ADMIN_SECRET:  ${{ secrets.VITE_ADMIN_SECRET }}
