@@ -1,76 +1,102 @@
-QuizXLM is a decentralized quiz application built on the Stellar network.
+
+# 🌟 QuizXLM-v2
+
+QuizXLM is a decentralized quiz application built on the Stellar network.  
 Users can connect their wallet, answer quiz questions, and earn XLM rewards based on performance.
 
 This Level-4 version extends the Level-3 project with advanced blockchain and UI features like inter-contract calls, leaderboard tracking, CI/CD pipeline, and mobile responsiveness.
 
-✨ Features
-🧠 Core Features
-Timed quiz system
-Reward distribution in XLM
-Streak-based bonus rewards
-Wallet connection using Freighter
-⚡ Advanced Level-4 Features
-🔗 Inter-contract calls
-Reward contract calls leaderboard contract after payout
-🏆 Leaderboard system
-Stores top scores on-chain
-🎯 50-50 Lifeline
-Removes 2 incorrect options (limited usage)
-📊 Review Answers Screen
-Detailed performance breakdown
-📱 Mobile Responsive UI
-🔄 CI/CD Pipeline (GitHub Actions)
+---
 
+## ✨ Features
 
-🏗️ Tech Stack:
-Frontend: React (Vite)
-Blockchain: Soroban (Stellar Smart Contracts)
-Wallet: Freighter
-CI/CD: GitHub Actions
+### 🧠 Core Features
+- Timed quiz system
+- Reward distribution in XLM
+- Streak-based bonus rewards
+- Wallet connection using Freighter
 
+### ⚡ Advanced Level-4 Features
+- Inter-contract calls
+- Leaderboard system (on-chain)
+- 50-50 lifeline
+- Review answers screen
+- Mobile responsive UI
+- CI/CD pipeline
 
-🔗 Live Demo:
-Example: https://quiz-xlm-v2.vercel.app
+---
 
+## 🔗 Live Demo
+https://quiz-xlm-v2.vercel.app
 
-📸 Screenshots:
-📱 Mobile Responsive View
-<img width="1919" height="1017" alt="Screenshot 2026-03-31 192822" src="https://github.com/user-attachments/assets/32aa69db-a9e4-4c4b-bfaf-7bb35918f345" />
+---
 
+## 🌐 Deployment
+This app is deployed on **Vercel**
 
+---
 
+## 🧪 CI/CD Pipeline
+Implemented using **GitHub Actions**
 
-📜 Smart Contracts:
-1️⃣ Quiz Reward Contract
-Handles:
-Answer submission
-Reward calculation
-XLM transfer
+Pipeline includes:
+- Smart contract build & test (Rust)
+- Frontend testing (Vitest)
+- Build & deployment
 
-2️⃣ Leaderboard Contract
-Stores:
-Player scores
-Top rankings
+---
 
+## 📸 Screenshots
 
-📍 Contract Details:
-Transaction Hash (example): be738723b6d6b5495af51081dedbc709686b5cee372892de769a230d340c5bfc
+### 📱 Mobile Responsive View
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/32aa69db-a9e4-4c4b-bfaf-7bb35918f345" width="650"/>
+</p>
 
+---
 
-💰 Token / Pool Info:
-❌ No custom token used
-✅ Rewards are distributed in native XLM
+## 📜 Smart Contracts
 
+### 1️⃣ Quiz Reward Contract
+- Answer submission  
+- Reward calculation  
+- XLM transfer  
 
-🧾 Git Commit History (Required 8+):
+### 2️⃣ Leaderboard Contract
+- Stores player scores  
+- Maintains top rankings  
 
-1	feat(contract): add QuizRewardContract with reward logic
-2	feat(contract): add Leaderboard contract
-3	feat(contract): inter-contract call for leaderboard update
-4	feat(ui): add Quiz component with timer & rewards
-5	feat(ui): add 50-50 lifeline
-6	feat(ui): add Review Answers screen
-7	fix(ui): mobile responsive layout
-8	ci: add GitHub Actions pipeline
-9	feat(ui): add Leaderboard UI
-10	feat(wallet): integrate Freighter wallet
+---
+
+## 📍 Contract Details
+Transaction Hash: `be738723b6d6b5495af51081dedbc709686b5cee372892de769a230d340c5bfc`
+
+---
+
+## 💰 Token / Pool Info
+- ❌ No custom token used  
+- ✅ Rewards are distributed in native XLM  
+
+---
+
+## ⚙️ CI/CD Pipeline
+![CI](https://github.com/Poorva-M/QuizXLM-v2/actions/workflows/ci.yml/badge.svg)
+
+---
+
+## 🧾 Git Commit History
+
+| # | Commit Message |
+|--|--|
+| 1 | feat(contract): add QuizRewardContract |
+| 2 | feat(contract): add Leaderboard contract |
+| 3 | feat(contract): inter-contract call |
+| 4 | feat(ui): Quiz component |
+| 5 | feat(ui): 50-50 lifeline |
+| 6 | feat(ui): Review screen |
+| 7 | fix(ui): responsive layout |
+| 8 | ci: GitHub Actions pipeline |
+| 9 | feat(ui): Leaderboard |
+| 10 | feat(wallet): Freighter integration |
+
+---
