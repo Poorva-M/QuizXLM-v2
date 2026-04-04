@@ -79,11 +79,6 @@ Transaction Hash: `be738723b6d6b5495af51081dedbc709686b5cee372892de769a230d340c5
 
 ---
 
-## ⚙️ CI/CD Pipeline
-![CI](https://github.com/Poorva-M/QuizXLM-v2/actions/workflows/ci.yml/badge.svg)
-
----
-
 ## 🧾 Git Commit History
 
 | # | Commit Message |
