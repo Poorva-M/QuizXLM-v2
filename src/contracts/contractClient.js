@@ -1,15 +1,15 @@
 /**
  * contractClient.js
  *
- * All reward logic is executed on-chain via the deployed Soroban contract.
- * NO fallback local calculations. NO Horizon off-chain payments.
- * If the contract call fails, the error propagates — no silent fallbacks.
+ * ALL reward logic goes through the deployed Soroban contract on Stellar Testnet.
+ * No local fallbacks. No Horizon payment bypass.
  *
- * Contract functions used (from contracts/src/lib.rs):
- *   - send_reward(admin, player, correct_answers, total_questions, max_streak) → i128
- *   - calculate_reward(correct_answers, max_streak) → RewardResult
- *   - get_score(player) → PlayerScore
- *   - get_balance() → i128
+ * Contract functions exposed:
+ *   contractSendReward(player, correct, streak)   → submits send_reward() on-chain
+ *   contractCalculateReward(correct, streak)      → simulates calculate_reward()
+ *   contractGetScore(player)                      → simulates get_score()
+ *   contractGetBalance()                          → simulates get_balance()
+ *   initializeContract()                          → submits initialize() once
  */
 
 import * as StellarSdk from "@stellar/stellar-sdk";
@@ -26,69 +26,34 @@ const {
   rpc,
 } = StellarSdk;
 
-// ── Configuration ──
+// ── Configuration ──────────────────────────────────────────────
 export const CONTRACT_ID =
   import.meta.env.VITE_CONTRACT_ID ||
   "CCIJOQK5P3NWF7NZKYVCTTMOQDSQDPWHEAQWPSBRTDAISDSUN736LSSG";
 
 const SOROBAN_RPC_URL    = "https://soroban-testnet.stellar.org";
 const NETWORK_PASSPHRASE = Networks.TESTNET;
-const TOTAL_QUESTIONS    = 10;
 
 const rpcServer = new rpc.Server(SOROBAN_RPC_URL);
 const contract  = new Contract(CONTRACT_ID);
 
-// ── Poll for transaction confirmation ──
-const waitForTransaction = async (hash, maxAttempts = 20) => {
-  for (let i = 0; i < maxAttempts; i++) {
-    const result = await rpcServer.getTransaction(hash);
-    if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) return result;
-    if (result.status === rpc.Api.GetTransactionStatus.FAILED) {
-      throw new Error(`Transaction failed: ${JSON.stringify(result)}`);
-    }
-    await new Promise((res) => setTimeout(res, 1500));
+// ── Internal helpers ───────────────────────────────────────────
+
+/** Load admin keypair — throws clearly if env var is missing. */
+function getAdminKeypair() {
+  const secret = import.meta.env.VITE_ADMIN_SECRET?.trim();
+  if (!secret || !secret.startsWith("S")) {
+    throw new Error("VITE_ADMIN_SECRET is not set or invalid in .env");
   }
-  throw new Error("Transaction confirmation timed out");
-};
+  return Keypair.fromSecret(secret);
+}
 
-// ── Build, simulate, prepare and submit a contract transaction ──
-const invokeContract = async (method, params, adminKeypair) => {
-  const account = await rpcServer.getAccount(adminKeypair.publicKey());
-
-  const unpreparedTx = new TransactionBuilder(account, {
-    fee:               BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(contract.call(method, ...params))
-    .setTimeout(30)
-    .build();
-
-  const simResult = await rpcServer.simulateTransaction(unpreparedTx);
-
-  if (rpc.Api.isSimulationError(simResult)) {
-    throw new Error(`Simulation error in ${method}: ${simResult.error}`);
-  }
-
-  const preparedTx = await rpcServer.prepareTransaction(unpreparedTx);
-  preparedTx.sign(adminKeypair);
-
-  const sendResult = await rpcServer.sendTransaction(preparedTx);
-
-  if (sendResult.status === "ERROR") {
-    throw new Error(
-      `Submit error in ${method}: ${JSON.stringify(sendResult.errorResult)}`
-    );
-  }
-
-  return waitForTransaction(sendResult.hash);
-};
-
-// ── Read-only simulation (no transaction submitted) ──
-const simulateReadOnly = async (method, params) => {
-  const adminSecret = import.meta.env.VITE_ADMIN_SECRET?.trim();
-  if (!adminSecret) throw new Error("VITE_ADMIN_SECRET not set in .env");
-
-  const keypair = Keypair.fromSecret(adminSecret);
+/**
+ * Simulate a read-only contract call and return the native JS value.
+ * Throws on simulation error — no fallback, caller decides what to do.
+ */
+async function simulate(method, params = []) {
+  const keypair = getAdminKeypair();
   const account = await rpcServer.getAccount(keypair.publicKey());
 
   const tx = new TransactionBuilder(account, {
@@ -102,36 +67,88 @@ const simulateReadOnly = async (method, params) => {
   const simResult = await rpcServer.simulateTransaction(tx);
 
   if (rpc.Api.isSimulationError(simResult)) {
-    throw new Error(`Simulation error in ${method}: ${simResult.error}`);
+    throw new Error(`Contract simulation failed [${method}]: ${simResult.error}`);
   }
 
   const retval = simResult.result?.retval;
-  if (!retval) throw new Error(`No return value from ${method}`);
-  return scValToNative(retval);
-};
+  return retval ? scValToNative(retval) : null;
+}
+
+/**
+ * Build, simulate, prepare, sign, submit and poll a state-changing contract call.
+ * Returns the transaction hash on success.
+ * Throws on any error — no silent swallowing.
+ */
+async function invoke(method, params = []) {
+  const keypair = getAdminKeypair();
+  const account = await rpcServer.getAccount(keypair.publicKey());
+
+  const unprepared = new TransactionBuilder(account, {
+    fee:               BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(contract.call(method, ...params))
+    .setTimeout(30)
+    .build();
+
+  const simResult = await rpcServer.simulateTransaction(unprepared);
+  if (rpc.Api.isSimulationError(simResult)) {
+    throw new Error(`Contract simulation failed [${method}]: ${simResult.error}`);
+  }
+
+  const prepared = await rpcServer.prepareTransaction(unprepared);
+  prepared.sign(keypair);
+
+  const sendResult = await rpcServer.sendTransaction(prepared);
+  if (sendResult.status === "ERROR") {
+    throw new Error(
+      `Contract submit failed [${method}]: ${JSON.stringify(sendResult.errorResult)}`
+    );
+  }
+
+  // Poll until confirmed
+  let result  = await rpcServer.getTransaction(sendResult.hash);
+  let attempts = 0;
+  while (
+    result.status === rpc.Api.GetTransactionStatus.NOT_FOUND &&
+    attempts < 20
+  ) {
+    await new Promise((r) => setTimeout(r, 1500));
+    result   = await rpcServer.getTransaction(sendResult.hash);
+    attempts++;
+  }
+
+  if (result.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(
+      `Contract tx not confirmed [${method}] after ${attempts} attempts. ` +
+      `Status: ${result.status}`
+    );
+  }
+
+  return sendResult.hash;
+}
+
+// ── Public API ─────────────────────────────────────────────────
 
 /**
  * CONTRACT CALL: send_reward
  *
- * Calls Rust: pub fn send_reward(env, admin, player, correct_answers, total_questions, max_streak) -> i128
+ * Invokes the Soroban send_reward() function which:
+ *   1. Calls calculate_reward() internally
+ *   2. Transfers XLM from the contract's balance to the player
+ *   3. Calls QuizLeaderboard::record_session() (inter-contract call)
  *
- * The contract handles:
- *   1. Reward calculation (base + streak bonus)
- *   2. XLM transfer from contract to player via token contract
- *   3. Inter-contract call to QuizLeaderboard::record_session()
+ * This is a state-changing transaction — it is signed and submitted on-chain.
+ * The contract itself moves the funds, not a Horizon payment.
  *
- * No off-chain Horizon payment is used.
+ * Rust: pub fn send_reward(env, admin, player, correct_answers, total_questions, max_streak) -> i128
  */
 export const contractSendReward = async (
   playerPublicKey,
   correctAnswers,
+  totalQuestions,
   maxStreak = 0
 ) => {
-  const adminSecret = import.meta.env.VITE_ADMIN_SECRET?.trim();
-
-  if (!adminSecret || !adminSecret.startsWith("S")) {
-    return { success: false, message: "Admin secret key not configured in .env" };
-  }
   if (!playerPublicKey) {
     return { success: false, message: "No wallet connected." };
   }
@@ -140,64 +157,48 @@ export const contractSendReward = async (
   }
 
   try {
-    console.log("=== Invoking send_reward() on Soroban contract ===");
-    console.log("Contract ID    :", CONTRACT_ID);
-    console.log("Player         :", playerPublicKey);
-    console.log("Correct answers:", correctAnswers);
-    console.log("Max streak     :", maxStreak);
+    const keypair      = getAdminKeypair();
+    const adminAddress = new Address(keypair.publicKey());
+    const playerAddress = new Address(playerPublicKey);
 
-    const adminKeypair    = Keypair.fromSecret(adminSecret);
-    const adminAddress    = new Address(adminKeypair.publicKey());
-    const playerAddress   = new Address(playerPublicKey);
+    const txHash = await invoke("send_reward", [
+      adminAddress.toScVal(),
+      playerAddress.toScVal(),
+      nativeToScVal(correctAnswers, { type: "u32" }),
+      nativeToScVal(totalQuestions, { type: "u32" }),
+      nativeToScVal(maxStreak,      { type: "u32" }),
+    ]);
 
-    const txResult = await invokeContract(
-      "send_reward",
-      [
-        adminAddress.toScVal(),
-        playerAddress.toScVal(),
-        nativeToScVal(correctAnswers, { type: "u32" }),
-        nativeToScVal(TOTAL_QUESTIONS, { type: "u32" }),
-        nativeToScVal(maxStreak,       { type: "u32" }),
-      ],
-      adminKeypair
-    );
-
-    // Decode the returned total_reward (i128 in stroops)
-    const totalRewardStroops = scValToNative(txResult.returnValue);
-    const totalReward        = Number(totalRewardStroops) / 10_000_000;
-
-    console.log("send_reward success! Total reward:", totalReward, "XLM");
-    console.log("TX hash:", txResult.txHash ?? txResult.hash);
-
-    const txHash = txResult.txHash ?? txResult.hash ?? "";
+    // Read back the reward amount from the contract for display
+    const { baseReward, streakBonus, totalReward } =
+      await contractCalculateReward(correctAnswers, maxStreak);
 
     return {
       success:     true,
       txHash,
+      baseReward,
+      streakBonus,
       totalReward,
       explorerUrl: `https://stellar.expert/explorer/testnet/tx/${txHash}`,
     };
   } catch (error) {
     console.error("contractSendReward error:", error);
-    return { success: false, message: error.message || "Contract call failed" };
+    return { success: false, message: error.message };
   }
 };
 
 /**
  * CONTRACT CALL: calculate_reward (read-only simulation)
  *
- * Calls Rust: pub fn calculate_reward(env, correct_answers: u32, max_streak: u32) -> RewardResult
- * No fallback — throws if the contract call fails.
+ * Rust: pub fn calculate_reward(env, correct_answers: u32, max_streak: u32) -> RewardResult
+ * No fallback — if the contract is unreachable, this throws so the caller
+ * knows the on-chain call failed rather than silently using local logic.
  */
 export const contractCalculateReward = async (correctAnswers, maxStreak) => {
-  console.log("Calling contract calculate_reward...");
-
-  const result = await simulateReadOnly("calculate_reward", [
+  const result = await simulate("calculate_reward", [
     nativeToScVal(correctAnswers, { type: "u32" }),
     nativeToScVal(maxStreak,      { type: "u32" }),
   ]);
-
-  console.log("calculate_reward result:", result);
 
   return {
     baseReward:  Number(result.base_reward)  / 10_000_000,
@@ -209,15 +210,13 @@ export const contractCalculateReward = async (correctAnswers, maxStreak) => {
 /**
  * CONTRACT CALL: get_score (read-only simulation)
  *
- * Calls Rust: pub fn get_score(env, player: Address) -> PlayerScore
+ * Rust: pub fn get_score(env, player: Address) -> PlayerScore
+ * Returns the player's on-chain score record.
  */
 export const contractGetScore = async (playerPublicKey) => {
-  console.log("Calling contract get_score for:", playerPublicKey);
-
-  const result = await simulateReadOnly("get_score", [
+  const result = await simulate("get_score", [
     new Address(playerPublicKey).toScVal(),
   ]);
-
   return {
     correct: Number(result.correct),
     total:   Number(result.total),
@@ -228,49 +227,34 @@ export const contractGetScore = async (playerPublicKey) => {
 /**
  * CONTRACT CALL: get_balance (read-only simulation)
  *
- * Calls Rust: pub fn get_balance(env) -> i128
+ * Rust: pub fn get_balance(env) -> i128
  */
 export const contractGetBalance = async () => {
-  console.log("Calling contract get_balance...");
-  const result = await simulateReadOnly("get_balance", []);
+  const result = await simulate("get_balance", []);
   return Number(result) / 10_000_000;
 };
 
 /**
- * CONTRACT CALL: initialize (run once after deployment)
+ * CONTRACT CALL: initialize (one-time setup)
  *
- * Calls Rust: pub fn initialize(env, admin, token, leaderboard)
- * Run from browser console or a deploy script — not called during normal gameplay.
+ * Call once after deployment from the browser console:
+ *   import('/src/contracts/contractClient.js').then(m => m.initializeContract().then(console.log))
+ *
+ * Rust: pub fn initialize(env, admin, token, leaderboard)
  */
-export const initializeContract = async (leaderboardContractId) => {
-  const adminSecret = import.meta.env.VITE_ADMIN_SECRET?.trim();
-  if (!adminSecret) {
-    return { success: false, message: "Admin secret not found in .env" };
-  }
-  if (!leaderboardContractId) {
-    return { success: false, message: "Leaderboard contract ID required" };
-  }
-
-  const NATIVE_TOKEN = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
-
+export const initializeContract = async (tokenAddress, leaderboardAddress) => {
   try {
-    const adminKeypair       = Keypair.fromSecret(adminSecret);
-    const adminAddress       = new Address(adminKeypair.publicKey());
-    const tokenAddress       = new Address(NATIVE_TOKEN);
-    const leaderboardAddress = new Address(leaderboardContractId);
+    const keypair      = getAdminKeypair();
+    const adminAddress = new Address(keypair.publicKey());
 
-    await invokeContract(
-      "initialize",
-      [
-        adminAddress.toScVal(),
-        tokenAddress.toScVal(),
-        leaderboardAddress.toScVal(),
-      ],
-      adminKeypair
-    );
+    const txHash = await invoke("initialize", [
+      adminAddress.toScVal(),
+      new Address(tokenAddress).toScVal(),
+      new Address(leaderboardAddress).toScVal(),
+    ]);
 
-    console.log("Contract initialized successfully.");
-    return { success: true };
+    console.log("Contract initialized! TX:", txHash);
+    return { success: true, txHash };
   } catch (error) {
     console.error("initializeContract error:", error);
     return { success: false, message: error.message };

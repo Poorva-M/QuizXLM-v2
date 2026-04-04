@@ -137,7 +137,8 @@ export default function Quiz({ publicKey, onFinish }) {
   const processReward = async (finalScore, finalMaxStreak) => {
     if (finalScore === 0) { setTxStatus("none"); return; }
     setTxStatus("loading");
-    const result = await sendReward(publicKey, finalScore, finalMaxStreak);
+    // Pass totalQuestions so the contract can record it in the leaderboard session
+    const result = await sendReward(publicKey, finalScore, QUESTIONS.length, finalMaxStreak);
     setTxData(result);
     setTxStatus(result.success ? "success" : "failed");
   };

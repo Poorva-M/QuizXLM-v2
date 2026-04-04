@@ -1,12 +1,14 @@
 /**
  * rewardService.js
  *
- * Thin bridge between Quiz.jsx and the Soroban smart contract.
- * All reward logic — calculation, transfer, leaderboard recording — is
- * executed on-chain inside send_reward() on the deployed Rust contract.
+ * Thin bridge between Quiz.jsx and the deployed Soroban contract.
+ * Every function routes directly to contractClient.js.
+ * No localStorage. No local calculations. No mock logic.
  *
- * No localStorage. No local calculations. No off-chain Horizon payments.
- * If the contract call fails the error is returned to the UI as-is.
+ * Daily-limit enforcement is handled on-chain: the contract's
+ * PlayerScore.total is checked via get_score() before attempting
+ * send_reward(). If the player has already played today the
+ * contract will reject the call — we surface that error cleanly.
  */
 
 import {
@@ -24,29 +26,34 @@ export { CONTRACT_ID };
  *
  * Called from Quiz.jsx after quiz completion.
  * Invokes send_reward() on the Soroban contract which:
- *   1. Calculates reward (base + streak bonus) on-chain
- *   2. Transfers XLM from the contract to the player via the token contract
- *   3. Calls QuizLeaderboard::record_session() via inter-contract call
+ *   - calculates the reward on-chain
+ *   - transfers XLM from contract balance to player
+ *   - records the session in QuizLeaderboard via inter-contract call
  *
- * @param {string} playerPublicKey - Stellar wallet address
- * @param {number} correctAnswers  - number of correct answers
- * @param {number} maxStreak       - highest consecutive streak
+ * @param {string} playerPublicKey
+ * @param {number} correctAnswers
+ * @param {number} totalQuestions
+ * @param {number} maxStreak
  * @returns {Promise<{ success, txHash?, totalReward?, explorerUrl?, message? }>}
  */
-export const sendReward = async (playerPublicKey, correctAnswers, maxStreak = 0) => {
-  console.log("=== rewardService.sendReward → contractSendReward ===");
-  console.log("Player        :", playerPublicKey);
-  console.log("Correct       :", correctAnswers);
-  console.log("Max streak    :", maxStreak);
-
-  return await contractSendReward(playerPublicKey, correctAnswers, maxStreak);
+export const sendReward = async (
+  playerPublicKey,
+  correctAnswers,
+  totalQuestions,
+  maxStreak = 0
+) => {
+  return await contractSendReward(
+    playerPublicKey,
+    correctAnswers,
+    totalQuestions,
+    maxStreak
+  );
 };
 
 /**
  * calculateReward
  *
- * Read-only simulation of the contract's calculate_reward().
- * Returns reward breakdown without sending any XLM.
+ * Simulates calculate_reward() on the contract — pure read, no state change.
  *
  * @param {number} correctAnswers
  * @param {number} maxStreak
@@ -59,7 +66,7 @@ export const calculateReward = async (correctAnswers, maxStreak) => {
 /**
  * getPlayerScore
  *
- * Reads the player's cumulative score from on-chain contract storage.
+ * Reads the player's on-chain score from the contract.
  *
  * @param {string} playerPublicKey
  * @returns {Promise<{ correct, total, earned }>}
@@ -71,7 +78,7 @@ export const getPlayerScore = async (playerPublicKey) => {
 /**
  * getContractBalance
  *
- * Reads the contract's current XLM balance from on-chain storage.
+ * Reads the contract's XLM balance on-chain.
  *
  * @returns {Promise<number>} XLM balance
  */

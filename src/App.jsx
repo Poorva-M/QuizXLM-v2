@@ -1,10 +1,4 @@
 // App.jsx
-//
-// - Removed saveScore / localStorage leaderboard calls.
-// - Tracks publicKeys of players who complete a quiz this session
-//   so the Leaderboard can query their on-chain scores.
-// - All score persistence is handled by the Soroban contract.
-
 import React, { useState } from "react";
 import "./App.css";
 import WalletConnect from "./WalletConnect";
@@ -12,25 +6,16 @@ import Quiz from "./Quiz";
 import Leaderboard from "./Leaderboard";
 
 export default function App() {
-  const [publicKey,    setPublicKey]    = useState(null);
-  const [page,         setPage]         = useState("home");
-  // Collect public keys of players who finished a quiz this session
-  // so the Leaderboard component can fetch their on-chain scores.
-  const [knownPlayers, setKnownPlayers] = useState([]);
+  const [publicKey, setPublicKey] = useState(null);
+  const [page, setPage] = useState("home");
 
   const handleWalletConnect = (key) => {
     setPublicKey(key);
     if (!key) setPage("home");
   };
 
+  // Leaderboard is now on-chain — no saveScore needed here
   const handleFinish = () => {
-    // Record this player as someone whose on-chain score can be queried.
-    // No localStorage writes — score is already on-chain via send_reward().
-    if (publicKey) {
-      setKnownPlayers((prev) =>
-        prev.includes(publicKey) ? prev : [...prev, publicKey]
-      );
-    }
     setPage("home");
   };
 
@@ -57,7 +42,6 @@ export default function App() {
         <Leaderboard
           onBack={() => setPage("home")}
           currentPublicKey={publicKey}
-          knownPlayers={knownPlayers}
         />
       )}
 
@@ -111,7 +95,7 @@ export default function App() {
             </div>
             {publicKey && (
               <div className="wallet-ready">
-                ✓ Wallet connected — you&apos;re ready to earn XLM!
+                ✓ Wallet connected — you're ready to earn XLM!
               </div>
             )}
           </div>
@@ -120,9 +104,9 @@ export default function App() {
           <div className="stats">
             {[
               { num: "0.5",     label: "XLM per correct answer" },
-              { num: "10",      label: "Quiz questions" },
-              { num: "100%",    label: "On-chain rewards" },
-              { num: "Instant", label: "Payout speed" },
+              { num: "10",      label: "Quiz questions"          },
+              { num: "100%",    label: "On-chain rewards"        },
+              { num: "Instant", label: "Payout speed"           },
             ].map((s) => (
               <div className="stat" key={s.label}>
                 <div className="stat-num">{s.num}</div>
@@ -136,9 +120,9 @@ export default function App() {
             <div className="section-label">How it works</div>
             <div className="steps">
               {[
-                { n: "1", title: "Connect Wallet",   desc: "Link your Freighter wallet on Stellar testnet." },
+                { n: "1", title: "Connect Wallet",  desc: "Link your Freighter wallet on Stellar testnet." },
                 { n: "2", title: "Answer Questions", desc: "Pick a category and answer multiple-choice questions." },
-                { n: "3", title: "Collect XLM",      desc: "send_reward() on the Soroban contract transfers XLM to your wallet instantly." },
+                { n: "3", title: "Collect XLM",      desc: "Correct answers trigger the Soroban contract — XLM lands instantly." },
               ].map((s) => (
                 <div
                   className={`step ${s.n === "1" && publicKey ? "step-done" : ""}`}

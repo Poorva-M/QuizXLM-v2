@@ -1,10 +1,15 @@
 #![no_std]
 
-//! QuizRewardContract — updated with inter-contract call to QuizLeaderboard.
+//! QuizXLM contracts crate.
 //!
-//! After every successful send_reward(), this contract now calls
-//! QuizLeaderboard::record_session() on the leaderboard contract address
-//! stored during initialization. That is the inter-contract call.
+//! Contains two contracts in one crate:
+//!   - QuizRewardContract  (this file)  — reward calculation + XLM transfer
+//!   - QuizLeaderboard     (leaderboard.rs) — on-chain session ranking
+//!
+//! QuizRewardContract calls QuizLeaderboard::record_session()
+//! via inter-contract call inside send_reward().
+
+pub mod leaderboard;
 
 use soroban_sdk::{
     contract, contractimpl, contracttype,
@@ -12,15 +17,15 @@ use soroban_sdk::{
     Address, Env, Symbol,
 };
 
-// ── Storage Keys ──
+// ── Storage Keys ──────────────────────────────────────────────
 const REWARD_KEY: Symbol = symbol_short!("REWARD");
 
-// ── Reward Constants (in stroops: 1 XLM = 10_000_000 stroops) ──
+// ── Reward Constants (in stroops: 1 XLM = 10_000_000 stroops) ─
 const REWARD_PER_CORRECT: i128 = 5_000_000;   // 0.5 XLM
 const STREAK_BONUS:       i128 = 50_000_000;  // 5 XLM
 const STREAK_THRESHOLD:   u32  = 5;
 
-// ── PlayerScore: stored per player address ──
+// ── PlayerScore ───────────────────────────────────────────────
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct PlayerScore {
@@ -29,7 +34,7 @@ pub struct PlayerScore {
     pub earned:  i128,
 }
 
-// ── RewardResult: returned from calculate_reward ──
+// ── RewardResult ──────────────────────────────────────────────
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct RewardResult {
@@ -38,9 +43,8 @@ pub struct RewardResult {
     pub total_reward: i128,
 }
 
-// ── Inter-contract interface for QuizLeaderboard ──
-// This lets us call QuizLeaderboard::record_session() directly from Rust.
-mod leaderboard {
+// ── Inter-contract client for QuizLeaderboard ─────────────────
+mod leaderboard_client {
     use soroban_sdk::{contractclient, Address, Env};
 
     #[contractclient(name = "LeaderboardClient")]
@@ -61,13 +65,12 @@ pub struct QuizRewardContract;
 #[contractimpl]
 impl QuizRewardContract {
 
-    /// Initialize the contract.
-    /// Now also stores the QuizLeaderboard contract address for inter-contract calls.
+    /// Initialize: stores admin, token, and leaderboard contract addresses.
     pub fn initialize(
         env:         Env,
         admin:       Address,
         token:       Address,
-        leaderboard: Address,   // ← QuizLeaderboard contract address
+        leaderboard: Address,
     ) {
         admin.require_auth();
         env.storage().instance().set(&symbol_short!("ADMIN"),  &admin);
@@ -76,7 +79,7 @@ impl QuizRewardContract {
         env.storage().instance().set(&REWARD_KEY, &REWARD_PER_CORRECT);
     }
 
-    /// Submit a quiz answer and receive XLM if correct.
+    /// Submit a quiz answer — pays reward if correct.
     pub fn submit_answer(env: Env, player: Address, is_correct: bool) -> i128 {
         player.require_auth();
 
@@ -112,7 +115,7 @@ impl QuizRewardContract {
         reward
     }
 
-    /// Calculate total reward for a completed quiz session. Pure function.
+    /// Pure function — calculate reward for a completed session.
     pub fn calculate_reward(
         _env:            Env,
         correct_answers: u32,
@@ -120,16 +123,14 @@ impl QuizRewardContract {
     ) -> RewardResult {
         let base_reward  = (correct_answers as i128) * REWARD_PER_CORRECT;
         let streak_bonus = if max_streak >= STREAK_THRESHOLD { STREAK_BONUS } else { 0 };
-        let total_reward = base_reward + streak_bonus;
-
-        RewardResult { base_reward, streak_bonus, total_reward }
+        RewardResult {
+            base_reward,
+            streak_bonus,
+            total_reward: base_reward + streak_bonus,
+        }
     }
 
-    /// Send full quiz reward to player after session ends.
-    ///
-    /// ★ INTER-CONTRACT CALL: after transferring XLM, this function calls
-    ///   QuizLeaderboard::record_session() on the leaderboard contract so the
-    ///   result is recorded on-chain in a separate contract.
+    /// Send reward to player and record session on-chain via inter-contract call.
     pub fn send_reward(
         env:             Env,
         admin:           Address,
@@ -140,17 +141,12 @@ impl QuizRewardContract {
     ) -> i128 {
         admin.require_auth();
 
-        let result = Self::calculate_reward(
-            env.clone(),
-            correct_answers,
-            max_streak,
-        );
-
+        let result = Self::calculate_reward(env.clone(), correct_answers, max_streak);
         if result.total_reward == 0 {
             return 0;
         }
 
-        // ── Step 1: Transfer XLM via token contract ──
+        // Step 1: Transfer XLM via token contract
         let token_address: Address = env
             .storage()
             .instance()
@@ -169,15 +165,14 @@ impl QuizRewardContract {
             result.total_reward,
         );
 
-        // ── Step 2: Inter-contract call → QuizLeaderboard::record_session ──
-        // This records the session result on-chain in the leaderboard contract.
+        // Step 2: Inter-contract call → QuizLeaderboard::record_session
         let leaderboard_address: Address = env
             .storage()
             .instance()
             .get(&symbol_short!("LB"))
             .expect("Leaderboard not initialized");
 
-        let lb_client = leaderboard::LeaderboardClient::new(&env, &leaderboard_address);
+        let lb_client = leaderboard_client::LeaderboardClient::new(&env, &leaderboard_address);
         lb_client.record_session(
             &player,
             &correct_answers,
@@ -188,7 +183,7 @@ impl QuizRewardContract {
         result.total_reward
     }
 
-    /// Get a player's cumulative score stats.
+    /// Get a player's cumulative on-chain score.
     pub fn get_score(env: Env, player: Address) -> PlayerScore {
         let score_key = (symbol_short!("SCORE"), player);
         env.storage()
@@ -205,21 +200,20 @@ impl QuizRewardContract {
             .unwrap_or(REWARD_PER_CORRECT)
     }
 
-    /// Get the contract's current XLM balance in stroops.
+    /// Get the contract's XLM balance in stroops.
     pub fn get_balance(env: Env) -> i128 {
         let token_address: Address = env
             .storage()
             .instance()
             .get(&symbol_short!("TOKEN"))
             .expect("Token not initialized");
-
         let token_client = token::Client::new(&env, &token_address);
         token_client.balance(&env.current_contract_address())
     }
 }
 
 // ─────────────────────────────────────────────────────────────
-// TESTS
+// TESTS — QuizRewardContract
 // ─────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod test {
@@ -242,11 +236,7 @@ mod test {
         )
     }
 
-    /// Register a minimal mock leaderboard contract for testing inter-contract calls.
-    /// In integration tests you'd use the real QuizLeaderboard WASM.
     fn mock_leaderboard(env: &Env) -> Address {
-        // Register a do-nothing contract stub for the leaderboard address.
-        // For unit tests, mock_all_auths() prevents the auth check from failing.
         Address::generate(env)
     }
 
@@ -297,7 +287,6 @@ mod test {
         let client = QuizRewardContractClient::new(&env, &contract_id);
 
         let result = client.calculate_reward(&8, &5);
-
         assert_eq!(result.base_reward,  8 * REWARD_PER_CORRECT);
         assert_eq!(result.streak_bonus, STREAK_BONUS);
         assert_eq!(result.total_reward, 8 * REWARD_PER_CORRECT + STREAK_BONUS);
@@ -310,7 +299,6 @@ mod test {
         let client = QuizRewardContractClient::new(&env, &contract_id);
 
         let result = client.calculate_reward(&3, &2);
-
         assert_eq!(result.streak_bonus, 0);
         assert_eq!(result.total_reward, 3 * REWARD_PER_CORRECT);
     }
