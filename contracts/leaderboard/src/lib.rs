@@ -339,3 +339,11 @@ mod test {
         assert_eq!(result.total_reward, 0);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
+}
