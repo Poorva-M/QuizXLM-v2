@@ -1,3 +1,124 @@
+# name: QuizXLM CI/CD
+
+# on:
+#   push:
+#     branches: [main, develop]
+#   pull_request:
+#     branches: [main]
+
+# jobs:
+
+#   contracts:
+#     name: Contracts — Build & Test
+#     runs-on: ubuntu-latest
+#     defaults:
+#       run:
+#         working-directory: contracts/leaderboard
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Install Rust + wasm32 target
+#         uses: dtolnay/rust-toolchain@stable
+#         with:
+#           targets: wasm32-unknown-unknown
+
+#       - name: Cache Cargo registry
+#         uses: actions/cache@v4
+#         with:
+#           path: |
+#             ~/.cargo/registry
+#             ~/.cargo/git
+#             contracts/leaderboard/target
+#           key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/leaderboard/Cargo.lock') }}
+
+#       - name: Run unit tests
+#         run: cargo test --verbose
+
+#       - name: Build WASM
+#         run: cargo build --target wasm32-unknown-unknown --release
+
+
+#   frontend:
+#     name: Frontend — Test & Build
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Setup Node.js 20
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: "20"
+#           cache: "npm"
+
+#       - name: Install dependencies
+#         run: npm ci
+
+#       - name: Run JS unit tests (Vitest)
+#         run: npm test -- --run
+
+#       - name: Build frontend (Vite)
+#         run: npm run build
+#         env:
+#           VITE_CONTRACT_ID: ${{ secrets.VITE_CONTRACT_ID }}
+#           VITE_LEADERBOARD_CONTRACT_ID: ${{ secrets.VITE_LEADERBOARD_CONTRACT_ID }}
+#           VITE_ADMIN_SECRET: ${{ secrets.VITE_ADMIN_SECRET }}
+
+#       - name: Upload dist artifact
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: frontend-dist
+#           path: dist/
+#           retention-days: 7
+
+
+#   deploy:
+#     name: Deploy to GitHub Pages
+#     needs: [contracts, frontend]
+#     runs-on: ubuntu-latest
+#     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+#     permissions:
+#       contents: read
+#       pages: write
+#       id-token: write
+
+#     environment:
+#       name: github-pages
+#       url: ${{ steps.deployment.outputs.page_url }}
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Setup Node.js 20
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: "20"
+#           cache: "npm"
+
+#       - name: Install dependencies
+#         run: npm ci
+
+#       - name: Production build
+#         run: npm run build
+#         env:
+#           VITE_CONTRACT_ID: ${{ secrets.VITE_CONTRACT_ID }}
+#           VITE_LEADERBOARD_CONTRACT_ID: ${{ secrets.VITE_LEADERBOARD_CONTRACT_ID }}
+#           VITE_ADMIN_SECRET: ${{ secrets.VITE_ADMIN_SECRET }}
+
+#       - name: Configure GitHub Pages
+#         uses: actions/configure-pages@v4
+
+#       - name: Upload Pages artifact
+#         uses: actions/upload-pages-artifact@v3
+#         with:
+#           path: dist/
+
+#       - name: Deploy
+#         id: deployment
+#         uses: actions/deploy-pages@v4
+
+
 name: QuizXLM CI/CD
 
 on:
@@ -8,13 +129,16 @@ on:
 
 jobs:
 
+  # ── Job 1: Build & test both contracts (single crate) ───────
+  # Both QuizRewardContract and QuizLeaderboard live in
+  # contracts/leaderboard/src/ (lib.rs + leaderboard.rs).
+  # One `cargo test` run covers all contract unit tests.
   contracts:
     name: Contracts — Build & Test
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: contracts/leaderboard
-
     steps:
       - uses: actions/checkout@v4
 
@@ -30,19 +154,26 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             contracts/leaderboard/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/leaderboard/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-contracts-${{ hashFiles('contracts/leaderboard/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-contracts-
 
-      - name: Run unit tests
+      - name: Run all contract unit tests
         run: cargo test --verbose
 
-      - name: Build WASM
+      - name: Build contract WASM (release)
         run: cargo build --target wasm32-unknown-unknown --release
 
+      - name: Upload contract WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: quiz-xlm-contracts-wasm
+          path: contracts/leaderboard/target/wasm32-unknown-unknown/release/*.wasm
+          retention-days: 7
 
+  # ── Job 2: Frontend — lint, test, build ────────────────────
   frontend:
     name: Frontend — Test & Build
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -61,9 +192,9 @@ jobs:
       - name: Build frontend (Vite)
         run: npm run build
         env:
-          VITE_CONTRACT_ID: ${{ secrets.VITE_CONTRACT_ID }}
+          VITE_CONTRACT_ID:             ${{ secrets.VITE_CONTRACT_ID }}
           VITE_LEADERBOARD_CONTRACT_ID: ${{ secrets.VITE_LEADERBOARD_CONTRACT_ID }}
-          VITE_ADMIN_SECRET: ${{ secrets.VITE_ADMIN_SECRET }}
+          VITE_ADMIN_SECRET:            ${{ secrets.VITE_ADMIN_SECRET }}
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
@@ -72,7 +203,7 @@ jobs:
           path: dist/
           retention-days: 7
 
-
+  # ── Job 3: Deploy to GitHub Pages (main branch only) ───────
   deploy:
     name: Deploy to GitHub Pages
     needs: [contracts, frontend]
@@ -82,11 +213,9 @@ jobs:
       contents: read
       pages: write
       id-token: write
-
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -102,9 +231,9 @@ jobs:
       - name: Production build
         run: npm run build
         env:
-          VITE_CONTRACT_ID: ${{ secrets.VITE_CONTRACT_ID }}
+          VITE_CONTRACT_ID:             ${{ secrets.VITE_CONTRACT_ID }}
           VITE_LEADERBOARD_CONTRACT_ID: ${{ secrets.VITE_LEADERBOARD_CONTRACT_ID }}
-          VITE_ADMIN_SECRET: ${{ secrets.VITE_ADMIN_SECRET }}
+          VITE_ADMIN_SECRET:            ${{ secrets.VITE_ADMIN_SECRET }}
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v4
